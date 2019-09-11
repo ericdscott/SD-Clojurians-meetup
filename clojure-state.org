@@ -1,0 +1,233 @@
+
+* FUNDAMENTAL OF THE MONTH: STATE IN CLOJURE
+** Clojure is 'immutable by default'
+- Values "are what they are"
+- Functions are pure
+  - Easy to replicate behavior (idempotent)
+  - 'Changes' are actually cheap copies or the original
+  - Straightforward to execute in parallel
+
+#+BEGIN_SRC clojure
+    (let [m {}
+          m' (assoc m :a "eh")]
+       [(str m) (str m')])
+#+END_SRC
+
+#+RESULTS:
+| {} | {:a "eh"} |
+
+
+
+** We govern state with _references_
+*** Identities
+- Like a street address
+- People move in and out, remodel kitchen etc
+- Address (identity) stays the same
+*** 'deref' returns a snapshot of the identity
+- "@x" = "(deref x)"
+- You can specify a timeout (deref ms val)
+
+*** Such references are ACI
+- Atomic 
+  - It either all happens or none of it happens
+- Consistant
+  - Goes from valid state to valid state
+- Isolated
+  - Blocks other writes until it's done
+- (not Durable)
+  - This ain't a database
+  - 'Software Transactional Memory'
+
+** Types of references
+*** Vars
+- Hold a value per-thread
+- Interned in the namespace
+- Set them with def or defn
+- Refer to the var itself with #'
+- Can rebind ^:dynamic var (binding [x 3] ...)
+- No deref
+- Not ACI
+*** Atoms
+- Most frequently used mutable reference
+- Manages mutable state in a single object 
+- A common idiom is to have a single atom 
+  holding app state as a map
+- Use 'reset!' to replace old state with new 
+  state
+- Use 'swap!' on a container to make 
+  incremental membership changes
+#+BEGIN_SRC clojure
+  (let [app-state (atom {})
+       ]
+    (reset! app-state {:a "eh"})
+    (swap! app-state assoc :b "bee")
+    [(str app-state) (str @app-state)])
+#+END_SRC
+
+#+RESULTS:
+| clojure.lang.Atom@11235981 | {:a "eh", :b "bee"} |
+
+
+*** Refs
+- Allow you to do synchronized manipulation on a 
+  plurality of states
+- Uses a 'dosync' transaction
+- Uses an 'alter' function within a dosync transaction
+- Often possible to do the same thing with atom
+#+BEGIN_SRC clojure -i
+  (let [acct1 (ref 1000)
+        acct2 (ref 0)]
+    (dosync
+      (alter acct1 - 500)
+      (alter acct2 + 500))
+    [@acct1 @acct2])
+#+END_SRC
+
+#+RESULTS:
+| 500 | 500 |
+
+*** Delays
+- Allow you to declare a resource you may need 
+  without calculating its value
+- Caches the result if you need it more than once
+  so you delegate its creation to the first time
+  it's used (say opening a DB session)
+#+BEGIN_SRC clojure
+  (let [later-gator (delay (Thread/sleep 2000) 42)]
+    (if false @later-gator 
+        ;; Else maybe we can skip it this time...
+        17)
+    )
+#+END_SRC
+
+#+RESULTS:
+: 17
+
+*** Promises
+- Allow you to defer addressing the details of 
+  acquiring a value
+- Used with 'deliver', often within a thread
+- One thread can deliver multiple promises
+#+BEGIN_SRC clojure 
+  (let [answer (promise)]
+    (-> (Thread. (fn [] (deliver answer 42)))
+        .start)
+    @answer)
+#+END_SRC
+
+#+RESULTS:
+: 42
+
+*** Futures
+- Allow you to off-load the work to another thread
+  asynchronously
+- Creates the thread for you, but only one reference
+- Deref'ing may give you an error it encountered
+#+BEGIN_SRC clojure -i
+  (let [answer (future (Thread/sleep 3000) 42)]
+    @answer)
+#+END_SRC
+
+#+RESULTS:
+: 42
+
+*** Agents
+- Like atoms except asynchronous
+- Allow you to dedicate a shared state to its own
+  execution thread
+- Used with 'send' and 'await'
+- Also send-off for functions with blocking actions
+- Also (await-for ms agent)  to specify a timeout
+#+BEGIN_SRC clojure
+ (let [handle-this (agent 0)
+       sleep-and-inc (fn [a](Thread/sleep 2000)(inc a))
+      ]
+   (send handle-this sleep-and-inc)
+   (send handle-this sleep-and-inc)
+   (await handle-this)
+   @handle-this)
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+
+*** Volatile!
+- Used to speed up tight loops that modify local state
+- Used 'like atoms', with 'vswap!' and 'vreset!'
+#+BEGIN_SRC clojure
+  (let [vmap (volatile! {})]
+     (vswap! vmap assoc :a "eh")
+     @vmap)
+#+END_SRC
+
+#+RESULTS:
+| :a | eh |
+
+** Special features
+*** The realized? function
+- promise, delay, future all block when you deref them
+- You can check if they're ready for deref'ing with 
+  'realized?'
+#+BEGIN_SRC clojure
+  (let [answer (future (Thread/sleep 3000) 42)
+        r? (realized? answer)
+       ]
+    [r? @answer])
+#+END_SRC
+
+#+RESULTS:
+| false | 42 |
+
+
+*** Watches
+- Allows you to auto-respond to state changes invoked by 
+  other parts of the program
+- Use (add-watch reference key watch-fn)
+- watch-fn := (fn[key reference before after]...)
+  -> side-effect
+- Remove with (remove-watch reference key)
+- Works on all refs, including vars
+#+BEGIN_SRC clojure
+(defn throw-demo-exception [key watched old new]
+  (throw (ex-info (str key ": State changed from " 
+                            old 
+                            " to " 
+                            new)
+                  {:type :demo-exception})))
+(let [to-watch (atom {})
+     ]
+  (add-watch to-watch :notification throw-demo-exception)
+  (swap! to-watch assoc :a "eh"))
+#+END_SRC
+
+#+RESULTS:
+: #'user/throw-demo-exceptionclass clojure.lang.ExceptionInfoclass clojure.lang.ExceptionInfoExecution error (ExceptionInfo) at user/throw-demo-exception (REPL:2).
+: :notification: State changed from {} to {:a "eh"}
+
+*** Validators
+- Allow you to guarantee a set of constraints on your 
+  state
+- Uses (set-validator! reference)
+- Also optional :validator key in atom declaration
+- validator := (fn [reference] ...) -> boolean
+#+BEGIN_SRC clojure -i
+  (let [check (fn [m] (and (string? (:a m)) 
+                           (number? (:b m))))
+        to-validate (atom {:a "eh" :b 2}
+                     :validator check)
+        ]
+    (swap! to-validate assoc :b "bee")
+    @to-validate)
+#+END_SRC
+
+#+RESULTS:
+: class java.lang.IllegalStateExceptionclass java.lang.IllegalStateExceptionExecution error (IllegalStateException) at user/eval5849 (REPL:6).
+: Invalid reference state
+
+
+** See also:
+- https://purelyfunctional.tv/guide/clojure-concurrency/
+- https://clojure.wladyka.eu/posts/share-state/
+  - esp. [[https://clojure.wladyka.eu/posts/share-state/#the-choice-flowchart][The choice flowchart]]
+- https://clojure.org/api/cheatsheet
