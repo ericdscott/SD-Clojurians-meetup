@@ -1,0 +1,382 @@
+* IGraph - a graph protocol for Clojure
+
+** Levels of expressiveness in Clojure collections
+- seq - first/rest
+- < set - membership
+- < vector - indexable members
+- < map - a collection of associations
+- < graph? - a collection of relationships
+
+*** Clojure collections can be invoked as functions
+- set: (s x) -> truthy
+- vector: (v i) -> ith member
+- map: (m key) -> value
+- graph (g & args) -> relationships
+
+
+
+** Graphs
+- nodes and edges
+- describable as 'triples' [<node1> <edge> <node2>]
+- a good medium for expressing arbitrary relationships
+
+*** RDF-type graphs
+- Resource Description Framework
+  - Tim Berners-Lee's brainchild
+  - Aims to do for data publishing what HTML does for content
+    publishing
+- Triples are [subject predicate object] 'S P O' for short
+- Subjects are URIs (Universal resource identifiers)
+- Predicates are URIs, identifying relationships with well-specified
+  semantics
+- Objects can be URIs, or literal values like strings or numbers.
+- C.f. Datomic/Datascript entity/attribute/value ('e-a-v') triples
+  - 'e' is a graph-specific integer
+  - URIs can 'pivot' off of 'e' through unique-identifier attributes
+    defined in a schema
+  - SPO/EAV should be easily translatable between each other
+
+**** URIs
+- The basis for Public Vocabularies
+  - Allows for sharing and re-use of ontologies
+  - Allows for self-describing models
+- Namespaced 
+  - with prefix abbreviations
+  - https://prefix.cc/
+- C.f. Clojure namespaced keywords
+  - I will speak here or 'KWIs' (Keyword Identifiers)
+    - Namespaced keywords used exactly like URIs and alignable to them
+- Examples:
+  - @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+  - @prefix rdfs:  http://www.w3.org/2000/01/rdf-schema# .
+  - `rdf:type` - asserts class membership of individuals
+  - `rdfs:subClassOf` - builds class heirarchies
+  - `rdfs:domain` - specifies the class associated with subjects of a property
+  - `rdfs:range`- specifies the class associated with objects of a property
+  - `rdfs:subPropertyOf` - builds property heirarchies.
+
+
+**** RDF has good parts and bad parts
+- W3C standard 
+- URI-centric
+- Primarily a data _publishing_ medium
+- Only secondarily a knowledge representation medium
+- Prime directive: "Anybody can say anything about anything"
+  - Therefore must make the [[https://en.wikipedia.org/wiki/Open-world_assumption][_Open World Assumption_]]
+    - this precludes default logic
+  - Applications are inherently closed worlds
+- Limited native support of literal values
+  - Notoriously bad at representing ordered sequences
+  - No support for functions
+- RDF has numerous serialization formats
+  - [[https://en.wikipedia.org/wiki/Turtle_(syntax)][Turtle]] is quite readable
+    - makes it easy to express frame-based semantics
+  - XML is not (easily) human-readable
+    - This was the first version to be spec'd
+  - [[https://en.wikipedia.org/wiki/JSON-LD][JSON-LD]] is a JSON-based linked-data format
+    - better vector support
+- OWL - [[https://en.wikipedia.org/wiki/Web_Ontology_Language][Web Ontology Language]]
+  - Informs a reasoning model
+  - Open world assumption
+  - Quite involved / Not user friendly
+  - Brittle
+- Used in
+  - Bioinformatics
+  - Finance (FIBO)
+**** SPARQL endpoints
+- SPARQL is a SQL-like query langage against a triple-store
+- Eg: DBPedia
+  - Massive data repository acquired by scraping Wikipedia pages
+  - http://dbpedia.org/page/Barack_Obama
+  - Sparql endpoint: http://dbpedia.org/sparql
+  #+BEGIN_SRC sparql
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    SELECT DISTINCT ?barry
+    WHERE 
+    {
+      ?barry rdfs:label "Barack Obama"@en
+    } 
+    LIMIT 100
+   #+END_SRC
+   #+RESULTS:
+   barry
+   http://dbpedia.org/resource/Barack_Obama
+   http://dbpedia.org/resource/Category:Barack_Obama
+   
+
+**** Linked data
+- Public vocabularies allow disparate parties to align their data
+- https://lod-cloud.net/
+- https://prefix.cc/ is a prefix lookup repo
+- Ex: http://schema.org/Organization
+
+
+** IGraph Desiderata
+- Usability as a primitive container
+- Usabiility as an interface to large KRs
+- KWIs to name entities and relations
+- To be alignable to RDF without unneccesary direct dependencies.
+  - Easy import of LD from elsewhere
+  - "Reasonably straightforward" export as RDF
+
+
+** The IGraph Protocol (ont-app.igraph.core)
+*** IGraph overview
+- A protocol
+  - May have a variety of _native representations_ under the hood
+  - Common functions for adding, subtracting, member access
+- Based on rendering native representation as a _normal form_
+- S-P-O can be any hashable values
+
+
+*** The IGraph Protocol - member access
+**** (normal-form g)
+- Will usually differ from the _native representation_ 
+- Normal forms need to be really simple and really regular
+- {<subject> {<predicate #{<object>, ...}, ...}, ...}
+- May not always be tractable
+- ont-app.igraph.graph/Graph is an implementation of igraph whose native
+  representation is normal form.
+
+
+**** (subjects g)
+- Returns (<subject> , ...)
+- May throw (ex-info ...{:type :igraph/Intractable ..})
+
+**** (get-p-o g s)
+- Returns a _description_ of the subject in normal form
+- {<predicate> #{<object>, ...}, ...}
+- There are utility functions to 'flatten'/normalize between
+  descriptions and maps.
+**** (get-o g s p)
+- Returns all objects for a given s and p in g
+- There's a utility function igraph/unique
+  - (unique (get-o g :a :b)) -> :c
+  - Works for any collection
+  - Throws an error if not a singleton by default
+    - optonal 'ambiguity handler'
+  - This is a bit of extra work, but allows for schema-on-read 
+
+**** (ask g s p o)
+- 'Truthy' if s-p-o is in g
+
+
+**** (query g query-spec)
+- query spec is dependent on native representation
+  - should have variables to bind
+- returns a sequence of _binding maps_
+- a binding map := {<var> <value>, ...}
+- igraph.graph/Graph query is just vector-of-triples as a graph pattern
+  - example
+   #+BEGIN_SRC clojure
+    (query g [[:?s :isa :?class] ]) 
+    ;;-> 
+    #{{:?s :banana :?class :fruit}, ...}
+   #+END_SRC
+- SPARQL is supported in sparql-client
+- datalog is supported in the datascript-client 
+- future work will try to come up with a common query representation
+  that translates to any native query format.
+
+
+
+*** Functional invocation of IGraphs
+- The protocol should define invoke for all 4 of the following arities:
+- (g) = (normal-form g) -> contents of g in normal form
+- (g s) = (get-p-o g s) -> predicate-object description
+- (g s p) = (get-o g s p) -> objects in g s.t. s p o
+- (g s p o) = (ask g s p o) -> truthy if s-p-o is in graph
+
+
+
+*** The IGraph Protocol - content manipulation
+- (read-only? g) 
+- (add to-add)
+  - Normal form: (add g {:a {:b #{:c}}}) -> g'
+  - One triple at a time: (add g [:a :b :c]) -> g'
+  - A vector of vectors: (add g [[:a :b :c]
+                                 [:a :b :d]]) -> g'
+  - Dispatched by clojure.spec's
+- (subtract to-subract)
+  - Same as addition, but vectors can be shorter
+    - (subtract g [:a])  removes all [:a * *]
+    - (subtract g [:a :b]) removes all [:a :b *] 
+
+
+*** Current implementations
+- ont-app.igraph.graph/Graph 
+  - Native representaton is Normal Form
+  - Light-weight
+  - Suitable for small-scale use as a graph datastructure
+  - clojure(script)
+  - Querying is primitive
+    - no query planning or indexing
+
+- [[https://github.com/ont-app/sparql-client][sparql-client]] (ont-app.sparql-client.core)
+  - IGraph interface to a SPARQL endpoint
+    - e.g. DBpedia, Wikidata
+  - clj only
+- [[https://github.com/ont-app/datascript-graph][datascript-graph]] (ont-app.datascript-graph.core)
+  - Uses datalog
+  - clojure(script)
+
+- Future work
+  - Datomic
+  - Loom
+  - Ubergraph
+  - Grafter
+  - Improving igraph.graph/Graph
+  - Native triplestores
+    - Jena/rdf4j/blazegraph...
+  - Tabular data
+  - Arbitrary web APIs? 
+
+
+** The GraphSet Protocol
+- (union g1 g2) -> triples in either
+- (intersection g1 g2) -> triples in both
+- (difference g1 g2) -> triples in g1 not in g2
+
+
+
+** Advanced usage
+*** Traversal Functions
+**** A digression on the 'reduce' idiom in Clojure
+- (reduce reducer accumulator collection) -> accumulator'
+- The reducer function _expresses_ the relationship between each
+  member of the collection and the resulting aggregation
+- reduce-kv works on maps (reduce-kv [m k v]...)
+- There is a reduce-spo function (reduce-spo (fn [acc s p o]...) 
+
+**** Traverse works analogously to reduce
+- (traverse g traversal-fn context accumulator queue) -> accumulator'
+  - context argument is optional (defaults to {})
+- g is read-only
+- traversal-fn := [g ctx acc q] -> [ctx' acc' q']
+  - typically operates only on the first element of the queue
+- context is used by the traverse function to avoid cycles
+  - {:history #{<already-visited>, ...}, ...}
+  - Anything in history that shows up at the head of the queue will be skipped
+  - can also be used by the traversal function as a 'blackboard'
+- accumulator is any arbitrary value (like reduce)
+- queue is a sequence of values to visit in the graph
+  - traversal stops with empty queue
+  - output should exclude (first queue)
+  - More sophisticated traversal functions may prune or re-order the queue
+
+*** Functional properties
+- In igraph.graph/Graph, providing a traversal functon in P position
+  has special semantics
+  - acts as a 'super predicate'
+- (g s p-fn) invokes (traverse g p-fn #{} [s]) -> #{<value>, ...}
+- (g s p-fn o) is truthy if the traversal function can link s to o.
+- C.f. SPARQL property paths Select * Where {?instance a/rdfs:subClassOf* ?class}
+
+
+*** Utilities to create traversal functions
+- (transitive-closure <p>) 
+  - Traverses chains of <p> of length 0 or more
+- (traverse-link <p>) 
+  - Accumulates everything on the other side of a <p> link from every
+    member of the queue.
+- (maybe-traverse <p>) 
+  - Adds anything on the other side of <p> to the original queue
+- (traversal-disjunction <p1> <p2>...)
+  - Matches any occurrence of <p1> <p2>...
+
+*** Traversal functions can be composed
+- Short form (traversal-comp v)
+  - Argument is a vector
+  - usable with traversal functions that don't manipulate context
+  - example:
+    - def maybe-isa (maybe-traverse :isa)
+    - def sub-class-of* (transitive-closure :sub-class-of)
+    - def isa?-sub-class-of* (traversal-comp [maybe-isa sub-class-of*])
+- Long form (traversal-comp m)
+  - Argument is a map
+  - Keys have special semantics to handle manipulation of the local
+    and global contexts that are referenced by one or more of the
+    traversal functions.
+  - Usually the short form is all you need
+
+      
+
+
+** Example app: [[https://github.com/ont-app/graph-log][graph-log]]
+- Log entries can be done with ad-hoc KWIs and arguments
+- (log <class-kwi> & args)
+  - Mints new KWI for the entry 
+  - Records args and other metadata in the log-graph
+  #+BEGIN_SRC clojure
+  (require '[ont-app.graph-log.core :as glog])
+  (glog/log :log/StartingMyFunc :log/arg1 "blah" :log/arg2 "blih")
+  ;;=> 
+  (swap! glog/log-graph add 
+     [:StartingMyFunc_25_blah_blih
+      :rdf/type :log/StarttingMyFunc
+      :glog/executionOrder 25
+      :glog/timestamp 1234567
+      :log/arg1 "blah"
+      :log/arg2 "blih"])
+  #+END_SRC
+- Values can be captured with glog/log-value
+  #+BEGIN_SRC clojure
+  (glog/log-value :log/MyFuncReturn 42)
+  ;;->
+  42
+  ;; side effect:
+  (swap! glog/log-graph add
+    [:log/MyFuncReturn_26
+     :rdf/type :log/MyFuncReturn
+     :glog/executionOrder 26
+     :glog/timestamp 1234589
+     :glog/value 42])
+  #+END_SRC
+- Afterwards you can get a listing of all entries in order
+- log-graph can be queried in various ways 
+  - Traverse backward on :glog/executionOrder
+  - Diagnostic functions can be built on these log entries
+
+
+
+** Where I'm going with this
+*** Ontology-driven development
+- subset of [[https://en.wikipedia.org/wiki/Domain-driven_design][Domain-driven]] development
+- "Bounded context" is a graph model
+- "Ubiquitous vocabulary" is the ontology
+  - Meaningfully named
+  - < Well documented
+  - < Fully specified
+  - < Executable
+  - < Testable
+- Like OO, (Classes and such) but it's "Just Data"
+  - Graph model is all in one place
+  - Services can pass triples back and forth to inform other models.
+
+*** Other projects in ont-app
+- [[https://github.com/ont-app/vocabulary][vocabulary]] 
+  - supports alignment of clojure namespaces to RDF namespaces through
+    metadata 
+- [[https://github.com/ont-app/igraph-vocabulary][igraph-vocabulary]]
+  - integrates IGraph with vocabulary, Supports KWI-minting.
+- [[https://github.com/ont-app/sparql-client][sparql-client]]
+  - IGraph implementation directed at SPARQL endpoints
+- [[https://github.com/ont-app/ttl2ignf][ttl2ignf]]
+  - translates RDF (turtle) to IGraph Normal Form
+- [[https://github.com/ont-app/datascript-graph][datascript-graph]]
+  - IGraph implementation of datascript
+- [[https://github.com/ont-app/graph-log][graph-log]]
+  - Graph-based logging system
+- [[https://github.com/ont-app/prototypes][prototypes]]
+  - Code and vocabulary for default-based inheritance
+- [[https://github.com/ont-app/validation][validation]]
+  - Code and vocabulary for validating graphs
+- [[https://github.com/ont-app/inference][inference]]
+  - Code and vocabulary for defining and applying rules
+- [[https://github.com/ont-app/tasks][tasks]]
+  - Code and vocabulary for task analysis and modeling
+- Graph Navigator (not posted)
+  - A web-based browser for IGraph content
+
+
+
