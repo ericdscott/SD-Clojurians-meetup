@@ -30,7 +30,7 @@
 - Predicates are URIs, identifying relationships with well-specified
   semantics
 - Objects can be URIs, or literal values like strings or numbers.
-- C.f. Datomic/Datascript entity/attribute/value ('e-a-v') triples
+- Cf. Datomic/Datascript entity/attribute/value ('e-a-v') triples
   - 'e' is a graph-specific integer
   - URIs can 'pivot' off of 'e' through unique-identifier attributes
     defined in a schema
@@ -43,7 +43,7 @@
 - Namespaced 
   - with prefix abbreviations
   - https://prefix.cc/
-- C.f. Clojure namespaced keywords
+- Cf. Clojure namespaced keywords
   - I will speak here or 'KWIs' (Keyword Identifiers)
     - Namespaced keywords used exactly like URIs and alignable to them
 - Examples:
@@ -270,7 +270,7 @@
   - acts as a 'super predicate'
 - (g s p-fn) invokes (traverse g p-fn #{} [s]) -> #{<value>, ...}
 - (g s p-fn o) is truthy if the traversal function can link s to o.
-- C.f. SPARQL property paths Select * Where {?instance a/rdfs:subClassOf* ?class}
+- Cf. SPARQL property paths Select * Where {?instance a/rdfs:subClassOf* ?class}
 
 
 *** Utilities to create traversal functions
