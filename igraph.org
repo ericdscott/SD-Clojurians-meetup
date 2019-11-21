@@ -30,6 +30,7 @@
 - Predicates are URIs, identifying relationships with well-specified
   semantics
 - Objects can be URIs, or literal values like strings or numbers.
+
 - Cf. Datomic/Datascript entity/attribute/value ('e-a-v') triples
   - 'e' is a graph-specific integer
   - URIs can 'pivot' off of 'e' through unique-identifier attributes
@@ -272,7 +273,6 @@
 - (g s p-fn o) is truthy if the traversal function can link s to o.
 - Cf. SPARQL property paths Select * Where {?instance a/rdfs:subClassOf* ?class}
 
-
 *** Utilities to create traversal functions
 - (transitive-closure <p>) 
   - Traverses chains of <p> of length 0 or more
@@ -377,6 +377,8 @@
   - Code and vocabulary for task analysis and modeling
 - Graph Navigator (not posted)
   - A web-based browser for IGraph content
+
+
 
 
 
